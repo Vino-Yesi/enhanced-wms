@@ -1,0 +1,575 @@
+// Enhanced WMS — Prisma schema (SQLite default, PostgreSQL switchable via DATABASE_URL)
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Shared base fields: every entity has id/createdAt/updatedAt/deletedAt/rev ──
+// (Applied per-model; SQLite does not support model inheritance.)
+
+model User {
+  id                Int       @id @default(autoincrement())
+  username          String    @unique
+  password          String    // argon2 hash — never returned
+  role              String    // admin | supervisor | operator | auditor
+  displayName       String
+  skillLevel        Int?
+  preferredTaskTypes String?
+  currentZone       String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+  rev               Int       @default(0)
+  refreshTokens     RefreshToken[]
+}
+
+model RefreshToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  tokenHash String   // sha256 hash of the refresh token
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+model AuditLog {
+  id           Int      @id @default(autoincrement())
+  entity       String
+  entityId     String?
+  action       String   // CREATE|UPDATE|DELETE|SYNC_CONFLICT|LOGIN|LOGOUT|PASSWORD_CHANGE
+  operatorId   Int?
+  operatorName String?
+  oldValues    String?  // JSON
+  newValues    String?  // JSON
+  ip           String?
+  userAgent    String?
+  createdAt    DateTime @default(now())
+  @@index([entity])
+  @@index([action])
+  @@index([operatorId])
+  @@index([createdAt])
+}
+
+model Notification {
+  id              Int      @id @default(autoincrement())
+  title           String
+  body            String
+  level           String   // info | warning | critical
+  createdBy       Int?
+  acknowledgedBy  String   // JSON array of userIds
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
+  rev             Int      @default(0)
+}
+
+model Setting {
+  key       String   @id
+  value     String   // JSON or plain
+  updatedAt DateTime @updatedAt
+}
+
+// ─── 1. inventory ──────────────────────────────────────────────────────
+model InventoryItem {
+  id                Int      @id @default(autoincrement())
+  sku               String
+  product           String
+  stock             Int      @default(0)
+  location          String
+  category          String?
+  velocity          String?
+  weight            Float?
+  reorderPoint      Int?
+  reorderQty        Int?
+  barcode           String?
+  rfidTag           String?
+  length            Float?
+  width             Float?
+  height            Float?
+  costPerUnit       Float?
+  lotNumber         String?
+  batchNumber       String?
+  expiryDate        String?
+  manufacturingDate String?
+  serializable      Boolean?
+  fefoPriority      Int?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  deletedAt         DateTime?
+  rev               Int      @default(0)
+  @@index([sku])
+  @@index([location])
+}
+
+// ─── 2. orders ─────────────────────────────────────────────────────────
+model Order {
+  id                Int      @id @default(autoincrement())
+  orderId           String
+  status            String
+  requiredSkus      String   // JSON
+  priority          String
+  assignedTo        String?
+  waveId            String?
+  batchId           String?
+  carrier           String?
+  service           String?
+  trackingNumber    String?
+  shippingCost      Float?
+  weightTotal       Float?
+  dimensionsTotal   String?
+  suggestedBoxSize  String?
+  actualBoxSize     String?
+  packingMaterials  String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  deletedAt         DateTime?
+  rev               Int      @default(0)
+  @@index([orderId])
+  @@index([status])
+}
+
+// ─── 3. returns ────────────────────────────────────────────────────────
+model ReturnRecord {
+  id          Int      @id @default(autoincrement())
+  orderId     String
+  sku         String
+  reason      String
+  restocked   Boolean  @default(false)
+  quantity    Int      @default(0)
+  processedAt String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+  rev         Int      @default(0)
+  @@index([orderId])
+}
+
+// ─── 4. inbound ────────────────────────────────────────────────────────
+model InboundRecord {
+  id                Int      @id @default(autoincrement())
+  sku               String
+  qty               Int
+  bin               String
+  description       String
+  lotNumber         String?
+  serialNumbers     String?
+  expiryDate        String?
+  receivedAt        String
+  crossDockOrderId  String?
+  qcStatus          String
+  poNumber          String?
+  supplier          String?
+  expectedQty       Int?
+  variance          Int?
+  putawayLocation   String?
+  putawayReason     String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  deletedAt         DateTime?
+  rev               Int      @default(0)
+  @@index([sku])
+  @@index([qcStatus])
+}
+
+// ─── 5. inventory-movements (append-only) ──────────────────────────────
+model InventoryMovement {
+  id           Int      @id @default(autoincrement())
+  sku          String
+  type         String
+  quantity     Int
+  fromLocation String?
+  toLocation   String?
+  orderId      String?
+  operator     String
+  lotNumber    String?
+  note         String?
+  timestamp    String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+  rev          Int      @default(0)
+  @@index([sku])
+  @@index([type])
+}
+
+// ─── 6. cycle-counts ───────────────────────────────────────────────────
+model CycleCount {
+  id             Int      @id @default(autoincrement())
+  sku            String
+  location       String
+  expectedQty    Int
+  actualQty      Int
+  variance       Int
+  status         String
+  operator       String
+  countedAt      String
+  note           String?
+  abcClass       String?
+  countFrequency String?
+  nextScheduled  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
+  rev            Int      @default(0)
+  @@index([sku])
+  @@index([status])
+}
+
+// ─── 7. zone-capacities ────────────────────────────────────────────────
+model ZoneCapacity {
+  id                Int      @id @default(autoincrement())
+  zone              String
+  maxCapacity       Int
+  currentUtilization Float
+  category          String?
+  velocityTarget    String?
+  aisle             String?
+  rack              String?
+  shelf             String?
+  binType           String?
+  maxWeight         Float?
+  putawayRules      String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  deletedAt         DateTime?
+  rev               Int      @default(0)
+  @@index([zone])
+}
+
+// ─── 8. worker-tasks ───────────────────────────────────────────────────
+model WorkerTask {
+  id            Int      @id @default(autoincrement())
+  type          String
+  orderId       String?
+  sku           String?
+  fromLocation  String?
+  toLocation    String?
+  quantity      Int
+  status        String
+  assignedTo    String
+  priority      String
+  completedAt   String?
+  note          String?
+  estimatedTime Float?
+  actualTime    Float?
+  distance      Float?
+  pickPath      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  rev           Int      @default(0)
+  @@index([status])
+  @@index([assignedTo])
+}
+
+// ─── 9. replenishment-tasks ────────────────────────────────────────────
+model ReplenishmentTask {
+  id           Int      @id @default(autoincrement())
+  sku          String
+  fromLocation String
+  toLocation   String
+  quantity     Int
+  status       String
+  priority     String
+  completedAt  String?
+  triggeredBy  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  deletedAt    DateTime?
+  rev          Int      @default(0)
+  @@index([sku])
+  @@index([status])
+}
+
+// ─── 10. qc-holds ──────────────────────────────────────────────────────
+model QCHold {
+  id         Int      @id @default(autoincrement())
+  sku        String
+  lotNumber  String?
+  quantity   Int
+  reason     String
+  status     String
+  operator   String
+  releasedAt String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  deletedAt  DateTime?
+  rev        Int      @default(0)
+  @@index([sku])
+  @@index([status])
+}
+
+// ─── 11. wave-batches ──────────────────────────────────────────────────
+model WaveBatch {
+  id            Int      @id @default(autoincrement())
+  waveId        String
+  name          String
+  status        String
+  orderIds      String
+  zoneProfile   String
+  completedAt   String?
+  pickPath      String?
+  estimatedTime Float?
+  actualTime    Float?
+  pickerId      String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  rev           Int      @default(0)
+  @@index([waveId])
+  @@index([status])
+}
+
+// ─── 12. purchase-orders ───────────────────────────────────────────────
+model PurchaseOrder {
+  id               Int      @id @default(autoincrement())
+  poNumber         String
+  supplier         String
+  status           String
+  expectedDelivery String
+  items            String   // JSON
+  totalValue       Float
+  currency         String
+  notes            String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  deletedAt        DateTime?
+  rev              Int      @default(0)
+  @@index([poNumber])
+  @@index([status])
+}
+
+// ─── 13. shipping-labels ───────────────────────────────────────────────
+model ShippingLabel {
+  id             Int      @id @default(autoincrement())
+  orderId        String
+  carrier        String
+  service        String
+  trackingNumber String
+  labelData      String
+  weight         Float
+  dimensions     String
+  cost           Float
+  status         String
+  printedAt      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
+  rev            Int      @default(0)
+  @@index([orderId])
+  @@index([status])
+}
+
+// ─── 14. carrier-rates ─────────────────────────────────────────────────
+model CarrierRate {
+  id            Int      @id @default(autoincrement())
+  carrier       String
+  service       String
+  weightFrom    Float
+  weightTo      Float
+  zone          String
+  rate          Float
+  currency      String
+  estimatedDays Int
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  rev           Int      @default(0)
+  @@index([carrier])
+  @@index([active])
+}
+
+// ─── 15. worker-performance ────────────────────────────────────────────
+model WorkerPerformance {
+  id              Int      @id @default(autoincrement())
+  workerId        String
+  workerName      String
+  date            String
+  picksCompleted  Int      @default(0)
+  picksPerHour    Float    @default(0)
+  accuracy        Float    @default(0)
+  distanceWalked  Float    @default(0)
+  tasksCompleted  Int      @default(0)
+  avgTaskTime     Float    @default(0)
+  uph             Float    @default(0)
+  pickCount       Int      @default(0)
+  packCount       Int      @default(0)
+  receiveCount    Int      @default(0)
+  putawayCount    Int      @default(0)
+  errors          Int      @default(0)
+  returnsCaused   Int      @default(0)
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
+  rev             Int      @default(0)
+  @@index([workerId])
+  @@index([date])
+}
+
+// ─── 16. integration-endpoints ─────────────────────────────────────────
+model IntegrationEndpoint {
+  id            Int      @id @default(autoincrement())
+  name          String
+  type          String
+  provider      String
+  config        String   // JSON text — never logged
+  status        String
+  lastSync      String?
+  nextSync      String?
+  syncInterval  Int      @default(60)
+  recordsSynced Int      @default(0)
+  errorCount    Int      @default(0)
+  lastError     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  rev           Int      @default(0)
+  @@index([name])
+  @@index([status])
+}
+
+// ─── 17. batch-groups ──────────────────────────────────────────────────
+model BatchGroup {
+  id            Int      @id @default(autoincrement())
+  batchId       String
+  orderIds      String
+  status        String
+  pickerId      String?
+  packerId      String?
+  pickPath      String?
+  estimatedTime Float?
+  actualTime    Float?
+  totalItems    Int      @default(0)
+  totalWeight   Float    @default(0)
+  completedAt   String?
+  zoneProfile   String
+  pickingMethod String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  rev           Int      @default(0)
+  @@index([batchId])
+  @@index([status])
+}
+
+// ─── 18. pick-paths ────────────────────────────────────────────────────
+model PickPath {
+  id            Int      @id @default(autoincrement())
+  pathId        String
+  orderIds      String
+  route         String   // JSON
+  totalDistance Float
+  estimatedTime Float
+  actualTime    Float?
+  pickerId      String?
+  status        String
+  completedAt   String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  rev           Int      @default(0)
+  @@index([pathId])
+  @@index([status])
+}
+
+// ─── 19. box-sizes ─────────────────────────────────────────────────────
+model BoxSize {
+  id        Int      @id @default(autoincrement())
+  name      String
+  length    Float
+  width     Float
+  height    Float
+  maxWeight Float
+  cost      Float
+  material  String
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+  rev       Int      @default(0)
+  @@index([name])
+  @@index([active])
+}
+
+// ─── 20. posting-records ───────────────────────────────────────────────
+model PostingRecord {
+  id          Int      @id @default(autoincrement())
+  postingId   String
+  trackingId  String?
+  orderId     String?
+  status      String
+  carrier     String?
+  photoData   String?  // large blob — truncated in list view
+  videoData   String?  // large blob — truncated in list view
+  geolocation String?
+  city        String?
+  note        String?
+  operator    String
+  folder      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+  rev         Int      @default(0)
+  @@index([postingId])
+  @@index([status])
+}
+
+// ─── 21. sim-db ────────────────────────────────────────────────────────
+model SimDbEntry {
+  id            Int      @id @default(autoincrement())
+  tacPrefix     String
+  expectedOffset Int
+  modelSeries   String
+  type          String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  deletedAt     DateTime?
+  rev           Int      @default(0)
+  @@index([tacPrefix])
+}
+
+// ─── 22. templates ─────────────────────────────────────────────────────
+model Template {
+  id        Int      @id @default(autoincrement())
+  raw       String
+  standard  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+  rev       Int      @default(0)
+}
+
+// ─── 23. aliases ───────────────────────────────────────────────────────
+model Alias {
+  id        Int      @id @default(autoincrement())
+  source    String
+  target    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+  rev       Int      @default(0)
+  @@index([source])
+}
+
+// ─── 24. preferences (per-user key/value) ──────────────────────────────
+model Preference {
+  id        Int      @id @default(autoincrement())
+  key       String
+  value     String
+  userId    Int?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+  rev       Int      @default(0)
+  @@index([key])
+}
